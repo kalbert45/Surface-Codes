@@ -2,37 +2,19 @@ import numpy as np
 import cirq
 import json
 
-# initialize Logical qubit, init should be 0 or 1
+# incomplete, should rely on an input qubit (?)
 class LogicalQubit:
-	def __init__(self, init):
+	def __init__(self):
 		self.qubits = cirq.GridQubit.square(3)
-		self.gates = initQubits(init, self.qubits)
 
 def initQubits(init, qubits):
-	gates = []
 	if (init == 1):
 		for i in range(len(qubits)):
-			gates.append(cirq.X(qubits[i]))
-		return gates
-	else:
-		return [cirq.I(qubits[0])]
+			yield cirq.X(qubits[i])
 
-# adds gates for all 9 data qubits (not tested)
-def gateOnLogical(gate, L):
-	for i in range(len(L.qubits)):
-		L.gates.append(gate.on(L.qubits[i]))
-
-# index should be 0-8 inclusive
-def injectError(gate, L, index):
-	L.gates.append(gate.on(L.qubits[index]))
-
-# yields all gates stored in L
-def initLogicalQubit(L):
-	for i in range(len(L.gates)):
-		yield L.gates[i]
 
 # given 9 qubits in a grid, returns a Clifford circuit
-def surfaceCode(L):
+def surfaceCode(init, q):
 	ancilla0 = cirq.NamedQubit('ancilla0')
 	ancilla1 = cirq.NamedQubit('ancilla1')
 	ancilla2 = cirq.NamedQubit('ancilla2')
@@ -48,56 +30,61 @@ def surfaceCode(L):
 	# measure stabilizers with repetition to account for measurement error
 	circuit = cirq.Circuit(
 		# initialize qubits
-		initLogicalQubit(L),
+		initQubits(init, q),
+
+		# inject errors
+		cirq.X(q[0]),
+		#cirq.Y(q[1]),
+		#cirq.Z(q[2]),
 
 		# measure Z stabs
-		cirq.CNOT(L.qubits[0], ancilla0),
-		cirq.CNOT(L.qubits[3], ancilla0),
+		cirq.CNOT(q[0], ancilla0),
+		cirq.CNOT(q[3], ancilla0),
 		cirq.measure(ancilla0),
 
-		cirq.CNOT(L.qubits[1], ancilla1),
-		cirq.CNOT(L.qubits[4], ancilla1),
-		cirq.CNOT(L.qubits[2], ancilla1),
-		cirq.CNOT(L.qubits[5], ancilla1),
+		cirq.CNOT(q[1], ancilla1),
+		cirq.CNOT(q[4], ancilla1),
+		cirq.CNOT(q[2], ancilla1),
+		cirq.CNOT(q[5], ancilla1),
 		cirq.measure(ancilla1),
 
-		cirq.CNOT(L.qubits[3], ancilla2),
-		cirq.CNOT(L.qubits[6], ancilla2),
-		cirq.CNOT(L.qubits[4], ancilla2),
-		cirq.CNOT(L.qubits[7], ancilla2),
+		cirq.CNOT(q[3], ancilla2),
+		cirq.CNOT(q[6], ancilla2),
+		cirq.CNOT(q[4], ancilla2),
+		cirq.CNOT(q[7], ancilla2),
 		cirq.measure(ancilla2),
 
-		cirq.CNOT(L.qubits[5], ancilla3),
-		cirq.CNOT(L.qubits[8], ancilla3),
+		cirq.CNOT(q[5], ancilla3),
+		cirq.CNOT(q[8], ancilla3),
 		cirq.measure(ancilla3),
 
 
 		# measure X stabs
 		cirq.H(ancilla4),
-		cirq.CNOT(ancilla4, L.qubits[1]),
-		cirq.CNOT(ancilla4, L.qubits[2]),
+		cirq.CNOT(ancilla4, q[1]),
+		cirq.CNOT(ancilla4, q[2]),
 		cirq.H(ancilla4),
 		cirq.measure(ancilla4),
 
 		cirq.H(ancilla5),
-		cirq.CNOT(ancilla5, L.qubits[0]),
-		cirq.CNOT(ancilla5, L.qubits[1]),
-		cirq.CNOT(ancilla5, L.qubits[3]),
-		cirq.CNOT(ancilla5, L.qubits[4]),
+		cirq.CNOT(ancilla5, q[0]),
+		cirq.CNOT(ancilla5, q[1]),
+		cirq.CNOT(ancilla5, q[3]),
+		cirq.CNOT(ancilla5, q[4]),
 		cirq.H(ancilla5),
 		cirq.measure(ancilla5),
 
 		cirq.H(ancilla6),
-		cirq.CNOT(ancilla6, L.qubits[4]),
-		cirq.CNOT(ancilla6, L.qubits[5]),
-		cirq.CNOT(ancilla6, L.qubits[7]),
-		cirq.CNOT(ancilla6, L.qubits[8]),
+		cirq.CNOT(ancilla6, q[4]),
+		cirq.CNOT(ancilla6, q[5]),
+		cirq.CNOT(ancilla6, q[7]),
+		cirq.CNOT(ancilla6, q[8]),
 		cirq.H(ancilla6),
 		cirq.measure(ancilla6),
 
 		cirq.H(ancilla7),
-		cirq.CNOT(ancilla7, L.qubits[6]),
-		cirq.CNOT(ancilla7, L.qubits[7]),
+		cirq.CNOT(ancilla7, q[6]),
+		cirq.CNOT(ancilla7, q[7]),
 		cirq.H(ancilla7),
 		cirq.measure(ancilla7)
 	)
@@ -116,9 +103,10 @@ def getCorrectionGate(q, gate):
 	else:
 		return None
 
-# given logical qubit, return logical state
-def measureLogicalQubit(L):
-	code = surfaceCode(L)
+# given qubit, prepare logical qubit
+def prepLogicalQubit(init):
+	L = LogicalQubit()
+	code = surfaceCode(init, L.qubits)
 
 	# run simulator on code
 	simulator = cirq.CliffordSimulator()
@@ -147,7 +135,12 @@ def measureLogicalQubit(L):
 
 	# apply correction to qubits in surface code
 	correctionCircuit = cirq.Circuit(
-		initLogicalQubit(L),
+		initQubits(init, L.qubits),
+
+		# inject errors again, need to fix
+		cirq.X(L.qubits[0]),
+		#cirq.Y(L.qubits[1]),
+		#cirq.Z(L.qubits[2]),
 
 		getCorrectionGate(L.qubits[0], corrections[0]),
 		getCorrectionGate(L.qubits[1], corrections[1]),
@@ -186,26 +179,12 @@ def measureLogicalQubit(L):
 
 	state = int(stateLookup[finalStates])
 
-	# measurement destroys data
-	L.gates = []
-
 	return state
 
-
 def main():
-	# gateOnLogical to apply gates
-	# measureLogicalQubit to run circuit and give final state
-
-	# debugging surface code; test 2 and 3 qubit errors (x,y,z)
-	# debugging gate on logical; apply multiple gates and make sure final state vector is correct
-
-	L = LogicalQubit(1)
-	print('final state 1: ' + str(measureLogicalQubit(L)))
-	print()
-
-	L = LogicalQubit(0)
-	print('final state 0: ' + str(measureLogicalQubit(L)))
-
+	print('final state 1: ' + str(prepLogicalQubit(1)))
+	print('')
+	print('final state 0: ' + str(prepLogicalQubit(0)))
 
 if __name__ == '__main__':
     main()
