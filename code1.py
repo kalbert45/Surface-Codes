@@ -2,29 +2,70 @@ import numpy as np
 import cirq
 import json
 
+prob_dark_error = 0.001
+
+def chain_error(q1, q2, d1, d2, diff_chain=False):
+	alpha = 0.001
+	if (diff_chain):
+		error_prob = alpha * (pow(d1, 3) + pow(d2, 3))
+	else:
+		error_prob = alpha * pow(np.abs(d1-d2), 3)
+
+	if (error_prob < np.random.uniform(0, 1)):
+		yield cirq.Z(q1)
+		yield cirq.X(q2)
+
+
 # initialize Logical qubits to 0 state. init is number of logical qubits we want.
 class LogicalQubits:
-	def __init__(self, init):
+	def __init__(self, init, error_model=False):
 		assert (init >= 1)
-		self.qubits = cirq.GridQubit.rect(init, 9)
-		self.gates = initQubits(9, self.qubits)
+		self.size = 9
+		self.qubits = cirq.GridQubit.rect(init, self.size+8)
+		self.ancillas = initAncillas(8, self.size, init, self)
+		self.gates = initQubits(self.size, self.qubits)
+		self.error_model = error_model
+
+	# i points to logical qubit, j points to data or ancilla
+	def qubit(self, i, j):
+		i *= 9
+		return self.qubits[i + j]
 
 	# adds gates on the L1, and L2 logical qubit if 2-qubit gate
 	def gateOnLogical(self, gate, L1, L2=None):
+		assert (L1 != L2)
 		if (L2 is None):
-			L1 = L1 * 9
 			for i in range(9):
-				self.gates.append(gate.on(self.qubits[L1 + i]))
+				self.gates.append(gate.on(self.qubit(L1, i)))
 		else:
-			L1 = L1 * 9
-			L2 = L2 * 9
-			for i in range(9):
-				self.gates.append(gate.on(self.qubits[L1 + i], self.qubits[L2 + i]))
+			if (self.error_model):
+				for i in range(9):
+					#p dark error
+					if (np.random.uniform(0,1) < prob_dark_error / 2):
+						continue
+					elif (np.random.uniform(0,1) < prob_dark_error / 2):
+						self.gates.append(cirq.CZ.on(self.qubit(L1, i), self.qubit(L2, i)))
+					else:
+						self.gates.append(gate.on(self.qubit(L1, i), self.qubit(L2, i)))
+
+					# chain specific error
+					self.gates.append(chain_error(self.qubit(L1, i), self.qubit(L2, i), i, i, True))
+			else:
+				for i in range(9):
+					self.gates.append(gate.on(self.qubit(L1, i), self.qubit(L2, i)))
+
 
 	# L points to logical qubit, index should be 0-8 inclusive and points to data qubit
 	def injectError(self, gate, L, index):
-		k = L*9 + index
-		L.gates.append(gate.on(self.qubits[k]))
+		L.gates.append(gate.on(self.qubit(L, index)))
+
+# potentially temporary FIX ASSIGNMENT TO GRID QUBIT
+def initAncillas(num_ancillas, num_qubits, num_logical, qubits):
+	ancillas = [[None]*num_ancillas]*num_logical 
+	for i in range(num_logical):
+		for j in range(num_ancillas):
+			ancillas[i][j] = qubits.qubit(i, num_qubits+j)
+	return ancillas
 
 def initQubits(size, qubits):
 	gates = []
@@ -37,107 +78,152 @@ def initLogicalQubits(L):
 	for i in range(len(L.gates)):
 		yield L.gates[i]
 
-# WIP
-# finds state vector for initializing logical qubit
-#def findLogicalStatevector(L):
-	#ancilla0 = cirq.NamedQubit('ancilla0')
-#	ancilla1 = cirq.NamedQubit('ancilla1')
-#	ancilla2 = cirq.NamedQubit('ancilla2')
-#	ancilla3 = cirq.NamedQubit('ancilla3')
-#	ancilla4 = cirq.NamedQubit('ancilla4')
-#	ancilla5 = cirq.NamedQubit('ancilla5')
-#	ancilla6 = cirq.NamedQubit('ancilla6')
-#	ancilla7 = cirq.NamedQubit('ancilla7')
-
-#	circuit = cirq.Circuit(
-	#	cirq.I(ancilla0),
-#		cirq.I(ancilla1),
-#		cirq.I(ancilla2),
-#		cirq.I(ancilla3),
-#		cirq.I(ancilla4),
-#		cirq.I(ancilla5),
-#		cirq.I(ancilla6),
-#		cirq.I(ancilla7),
-#		initLogicalQubit(L)
-#		)
-
-	#simulator = cirq.DensityMatrixSimulator()
-	#result = simulator.simulate(circuit)
-
-	#print(result.final_density_matrix)
-
-	#return np.array([0,0,0,0])
 
 # given logical qubits and an index pointing to one, returns a Clifford circuit
+# implement mapping algorithm here (?)
 def surfaceCode(L, i):
-
-	ancilla0 = cirq.NamedQubit('ancilla0')
-	ancilla1 = cirq.NamedQubit('ancilla1')
-	ancilla2 = cirq.NamedQubit('ancilla2')
-	ancilla3 = cirq.NamedQubit('ancilla3')
-	ancilla4 = cirq.NamedQubit('ancilla4')
-	ancilla5 = cirq.NamedQubit('ancilla5')
-	ancilla6 = cirq.NamedQubit('ancilla6')
-	ancilla7 = cirq.NamedQubit('ancilla7')
 
 	# X stabilizers: X1X2, X0X1X3X4, X4X5X7X8, X6X7 (H to ancilla, CNOT controlled on ancilla, then H, measure in Z)
 	# Z stabilizers: Z0Z3, Z1Z4Z2Z5, Z3Z6Z4Z7, Z5Z8 (ancilla, CNOT gates, then measure in Z)
 
 	# measure stabilizers with repetition to account for measurement error
-	circuit = cirq.Circuit(
-		initLogicalQubits(L),
 
-		# measure Z stabs
-		cirq.CNOT(L.qubits[i+0], ancilla0),
-		cirq.CNOT(L.qubits[i+3], ancilla0),
-		cirq.measure(ancilla0),
+	# no error circuit
+	if (L.error_model):
+		circuit = cirq.Circuit(
+			initLogicalQubits(L),
 
-		cirq.CNOT(L.qubits[i+1], ancilla1),
-		cirq.CNOT(L.qubits[i+4], ancilla1),
-		cirq.CNOT(L.qubits[i+2], ancilla1),
-		cirq.CNOT(L.qubits[i+5], ancilla1),
-		cirq.measure(ancilla1),
+			# measure Z stabs
+			cirq.CNOT(L.qubit(i, 0), L.ancillas[i][0]),
+			chain_error(L.qubit(i, 0), L.ancillas[i][0], 0, 9),
+			cirq.CNOT(L.qubit(i, 3), L.ancillas[i][0]),
+			chain_error(L.qubit(i, 3), L.ancillas[i][0], 3, 9),
+			cirq.measure(L.ancillas[i][0], key='ancilla0'),
 
-		cirq.CNOT(L.qubits[i+3], ancilla2),
-		cirq.CNOT(L.qubits[i+6], ancilla2),
-		cirq.CNOT(L.qubits[i+4], ancilla2),
-		cirq.CNOT(L.qubits[i+7], ancilla2),
-		cirq.measure(ancilla2),
+			cirq.CNOT(L.qubit(i, 1), L.ancillas[i][1]),
+			chain_error(L.qubit(i, 1), L.ancillas[i][1], 1, 10),
+			cirq.CNOT(L.qubit(i, 4), L.ancillas[i][1]),
+			chain_error(L.qubit(i, 4), L.ancillas[i][1], 4, 10),
+			cirq.CNOT(L.qubit(i, 2), L.ancillas[i][1]),
+			chain_error(L.qubit(i, 2), L.ancillas[i][1], 2, 10),
+			cirq.CNOT(L.qubit(i, 5), L.ancillas[i][1]),
+			chain_error(L.qubit(i, 5), L.ancillas[i][1], 5, 10),
+			cirq.measure(L.ancillas[i][1], key='ancilla1'),
 
-		cirq.CNOT(L.qubits[i+5], ancilla3),
-		cirq.CNOT(L.qubits[i+8], ancilla3),
-		cirq.measure(ancilla3),
+			cirq.CNOT(L.qubit(i, 3), L.ancillas[i][2]),
+			chain_error(L.qubit(i, 3), L.ancillas[i][2], 3, 11),
+			cirq.CNOT(L.qubit(i, 6), L.ancillas[i][2]),
+			chain_error(L.qubit(i, 6), L.ancillas[i][2], 6, 11),
+			cirq.CNOT(L.qubit(i, 4), L.ancillas[i][2]),
+			chain_error(L.qubit(i, 4), L.ancillas[i][2], 4, 11),
+			cirq.CNOT(L.qubit(i, 7), L.ancillas[i][2]),
+			chain_error(L.qubit(i, 7), L.ancillas[i][2], 7, 11),
+			cirq.measure(L.ancillas[i][2], key='ancilla2'),
+
+			cirq.CNOT(L.qubit(i, 5), L.ancillas[i][3]),
+			chain_error(L.qubit(i, 5), L.ancillas[i][3], 5, 12),
+			cirq.CNOT(L.qubit(i, 8), L.ancillas[i][3]),
+			chain_error(L.qubit(i, 8), L.ancillas[i][3], 8, 12),
+			cirq.measure(L.ancillas[i][3], key='ancilla3'),
 
 
-		# measure X stabs
-		cirq.H(ancilla4),
-		cirq.CNOT(ancilla4, L.qubits[i+1]),
-		cirq.CNOT(ancilla4, L.qubits[i+2]),
-		cirq.H(ancilla4),
-		cirq.measure(ancilla4),
+			# measure X stabs
+			cirq.H(L.ancillas[i][4]),
+			cirq.CNOT(L.ancillas[i][4], L.qubit(i, 1)),
+			chain_error(L.ancillas[i][4], L.qubit(i, 1), 13, 1),
+			cirq.CNOT(L.ancillas[i][4], L.qubit(i, 2)),
+			chain_error(L.ancillas[i][4], L.qubit(i, 2), 13, 2),
+			cirq.H(L.ancillas[i][4]),
+			cirq.measure(L.ancillas[i][4], key='ancilla4'),
 
-		cirq.H(ancilla5),
-		cirq.CNOT(ancilla5, L.qubits[i+0]),
-		cirq.CNOT(ancilla5, L.qubits[i+1]),
-		cirq.CNOT(ancilla5, L.qubits[i+3]),
-		cirq.CNOT(ancilla5, L.qubits[i+4]),
-		cirq.H(ancilla5),
-		cirq.measure(ancilla5),
+			cirq.H(L.ancillas[i][5]),
+			cirq.CNOT(L.ancillas[i][5], L.qubit(i, 0)),
+			chain_error(L.ancillas[i][5], L.qubit(i, 0), 14, 0),
+			cirq.CNOT(L.ancillas[i][5], L.qubit(i, 1)),
+			chain_error(L.ancillas[i][5], L.qubit(i, 1), 14, 1),
+			cirq.CNOT(L.ancillas[i][5], L.qubit(i, 3)),
+			chain_error(L.ancillas[i][5], L.qubit(i, 3), 14, 3),
+			cirq.CNOT(L.ancillas[i][5], L.qubit(i, 4)),
+			chain_error(L.ancillas[i][5], L.qubit(i, 4), 14, 4),
+			cirq.H(L.ancillas[i][5]),
+			cirq.measure(L.ancillas[i][5], key='ancilla5'),
 
-		cirq.H(ancilla6),
-		cirq.CNOT(ancilla6, L.qubits[i+4]),
-		cirq.CNOT(ancilla6, L.qubits[i+5]),
-		cirq.CNOT(ancilla6, L.qubits[i+7]),
-		cirq.CNOT(ancilla6, L.qubits[i+8]),
-		cirq.H(ancilla6),
-		cirq.measure(ancilla6),
+			cirq.H(L.ancillas[i][6]),
+			cirq.CNOT(L.ancillas[i][6], L.qubit(i, 4)),
+			chain_error(L.ancillas[i][6], L.qubit(i, 4), 15, 4),
+			cirq.CNOT(L.ancillas[i][6], L.qubit(i, 5)),
+			chain_error(L.ancillas[i][6], L.qubit(i, 5), 15, 5),
+			cirq.CNOT(L.ancillas[i][6], L.qubit(i, 7)),
+			chain_error(L.ancillas[i][6], L.qubit(i, 7), 15, 7),
+			cirq.CNOT(L.ancillas[i][6], L.qubit(i, 8)),
+			chain_error(L.ancillas[i][6], L.qubit(i, 8), 15, 8),
+			cirq.H(L.ancillas[i][6]),
+			cirq.measure(L.ancillas[i][6], key='ancilla6'),
 
-		cirq.H(ancilla7),
-		cirq.CNOT(ancilla7, L.qubits[i+6]),
-		cirq.CNOT(ancilla7, L.qubits[i+7]),
-		cirq.H(ancilla7),
-		cirq.measure(ancilla7)
-	)
+			cirq.H(L.ancillas[i][7]),
+			cirq.CNOT(L.ancillas[i][7], L.qubit(i, 6)),
+			chain_error(L.ancillas[i][7], L.qubit(i, 6), 16, 6),
+			cirq.CNOT(L.ancillas[i][7], L.qubit(i, 7)),
+			chain_error(L.ancillas[i][7], L.qubit(i, 7), 16, 7),
+			cirq.H(L.ancillas[i][7]),
+			cirq.measure(L.ancillas[i][7], key='ancilla7')
+		)
+	# circuit that simulates error from correcting process
+	else:
+		circuit = cirq.Circuit(
+			initLogicalQubits(L),
+
+			# measure Z stabs
+			cirq.CNOT(L.qubit(i, 0), L.ancillas[i][0]),
+			cirq.CNOT(L.qubit(i, 3), L.ancillas[i][0]),
+			cirq.measure(L.ancillas[i][0], key='ancilla0'),
+
+			cirq.CNOT(L.qubit(i, 1), L.ancillas[i][1]),
+			cirq.CNOT(L.qubit(i, 4), L.ancillas[i][1]),
+			cirq.CNOT(L.qubit(i, 2), L.ancillas[i][1]),
+			cirq.CNOT(L.qubit(i, 5), L.ancillas[i][1]),
+			cirq.measure(L.ancillas[i][1], key='ancilla1'),
+
+			cirq.CNOT(L.qubit(i, 3), L.ancillas[i][2]),
+			cirq.CNOT(L.qubit(i, 6), L.ancillas[i][2]),
+			cirq.CNOT(L.qubit(i, 4), L.ancillas[i][2]),
+			cirq.CNOT(L.qubit(i, 7), L.ancillas[i][2]),
+			cirq.measure(L.ancillas[i][2], key='ancilla2'),
+
+			cirq.CNOT(L.qubit(i, 5), L.ancillas[i][3]),
+			cirq.CNOT(L.qubit(i, 8), L.ancillas[i][3]),
+			cirq.measure(L.ancillas[i][3], key='ancilla3'),
+
+
+			# measure X stabs
+			cirq.H(L.ancillas[i][4]),
+			cirq.CNOT(L.ancillas[i][4], L.qubit(i, 1)),
+			cirq.CNOT(L.ancillas[i][4], L.qubit(i, 2)),
+			cirq.H(L.ancillas[i][4]),
+			cirq.measure(L.ancillas[i][4], key='ancilla4'),
+
+			cirq.H(L.ancillas[i][5]),
+			cirq.CNOT(L.ancillas[i][5], L.qubit(i, 0)),
+			cirq.CNOT(L.ancillas[i][5], L.qubit(i, 1)),
+			cirq.CNOT(L.ancillas[i][5], L.qubit(i, 3)),
+			cirq.CNOT(L.ancillas[i][5], L.qubit(i, 4)),
+			cirq.H(L.ancillas[i][5]),
+			cirq.measure(L.ancillas[i][5], key='ancilla5'),
+
+			cirq.H(L.ancillas[i][6]),
+			cirq.CNOT(L.ancillas[i][6], L.qubit(i, 4)),
+			cirq.CNOT(L.ancillas[i][6], L.qubit(i, 5)),
+			cirq.CNOT(L.ancillas[i][6], L.qubit(i, 7)),
+			cirq.CNOT(L.ancillas[i][6], L.qubit(i, 8)),
+			cirq.H(L.ancillas[i][6]),
+			cirq.measure(L.ancillas[i][6], key='ancilla6'),
+
+			cirq.H(L.ancillas[i][7]),
+			cirq.CNOT(L.ancillas[i][7], L.qubit(i, 6)),
+			cirq.CNOT(L.ancillas[i][7], L.qubit(i, 7)),
+			cirq.H(L.ancillas[i][7]),
+			cirq.measure(L.ancillas[i][7], key='ancilla7')
+		)
 
 	return circuit
 
@@ -155,7 +241,6 @@ def getCorrectionGate(q, gate):
 
 # given logical qubits and an index pointing to one, return logical state
 def measureLogicalQubit(L, index):
-	index = index*9
 	#init_state = findLogicalStatevector(L)
 
 	code = surfaceCode(L, index)
@@ -189,24 +274,24 @@ def measureLogicalQubit(L, index):
 	correctionCircuit = cirq.Circuit(
 		initLogicalQubits(L),
 
-		getCorrectionGate(L.qubits[index+0], corrections[0]),
-		getCorrectionGate(L.qubits[index+1], corrections[1]),
-		getCorrectionGate(L.qubits[index+2], corrections[2]),
-		getCorrectionGate(L.qubits[index+3], corrections[3]),
-		getCorrectionGate(L.qubits[index+4], corrections[4]),
-		getCorrectionGate(L.qubits[index+5], corrections[5]),
-		getCorrectionGate(L.qubits[index+6], corrections[6]),
-		getCorrectionGate(L.qubits[index+7], corrections[7]),
-		getCorrectionGate(L.qubits[index+8], corrections[8]),
-		cirq.measure(L.qubits[index+0], key='result0'),
-		cirq.measure(L.qubits[index+1], key='result1'),
-		cirq.measure(L.qubits[index+2], key='result2'),
-		cirq.measure(L.qubits[index+3], key='result3'),
-		cirq.measure(L.qubits[index+4], key='result4'),
-		cirq.measure(L.qubits[index+5], key='result5'),
-		cirq.measure(L.qubits[index+6], key='result6'),
-		cirq.measure(L.qubits[index+7], key='result7'),
-		cirq.measure(L.qubits[index+8], key='result8')
+		getCorrectionGate(L.qubit(index, 0), corrections[0]),
+		getCorrectionGate(L.qubit(index, 1), corrections[1]),
+		getCorrectionGate(L.qubit(index, 2), corrections[2]),
+		getCorrectionGate(L.qubit(index, 3), corrections[3]),
+		getCorrectionGate(L.qubit(index, 4), corrections[4]),
+		getCorrectionGate(L.qubit(index, 5), corrections[5]),
+		getCorrectionGate(L.qubit(index, 6), corrections[6]),
+		getCorrectionGate(L.qubit(index, 7), corrections[7]),
+		getCorrectionGate(L.qubit(index, 8), corrections[8]),
+		cirq.measure(L.qubit(index, 0), key='result0'),
+		cirq.measure(L.qubit(index, 1), key='result1'),
+		cirq.measure(L.qubit(index, 2), key='result2'),
+		cirq.measure(L.qubit(index, 3), key='result3'),
+		cirq.measure(L.qubit(index, 4), key='result4'),
+		cirq.measure(L.qubit(index, 5), key='result5'),
+		cirq.measure(L.qubit(index, 6), key='result6'),
+		cirq.measure(L.qubit(index, 7), key='result7'),
+		cirq.measure(L.qubit(index, 8), key='result8')
 		)
 
 	result = simulator.run(correctionCircuit)
@@ -230,6 +315,7 @@ def measureLogicalQubit(L, index):
 
 
 def main():
+	print(str(np.random.uniform(0,1)))
 	# gateOnLogical to apply gates
 	# measureLogicalQubit to run circuit and give final state
 
@@ -247,11 +333,17 @@ def main():
 	print('Flip first then CNOT gate: 1st qubit state = ' + str(measureLogicalQubit(L, 0)))
 	print('2nd qubit state = ' + str(measureLogicalQubit(L, 1)))
 
-	L = LogicalQubits(2)
-	L.gateOnLogical(cirq.X, 1)
+	L = LogicalQubits(2, True)
+	L.gateOnLogical(cirq.X, 0)
 	L.gateOnLogical(cirq.CNOT, 0, 1)
-	print('Flip second then CNOT gate: 1st qubit state = ' + str(measureLogicalQubit(L, 0)))
+	print('Flip first then CNOT gate: 1st qubit state (error prone) = ' + str(measureLogicalQubit(L, 0)))
 	print('2nd qubit state = ' + str(measureLogicalQubit(L, 1)))
+
+	#L = LogicalQubits(2)
+	#L.gateOnLogical(cirq.X, 1)
+	#L.gateOnLogical(cirq.CNOT, 0, 1)
+	#print('Flip second then CNOT gate: 1st qubit state = ' + str(measureLogicalQubit(L, 0)))
+	#print('2nd qubit state = ' + str(measureLogicalQubit(L, 1)))
 
 
 	print('desired outcome:')
