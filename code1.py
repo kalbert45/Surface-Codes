@@ -2,23 +2,47 @@ import numpy as np
 import cirq
 import json
 
-def chain_error(q1, q2, d1, d2, alpha, diff_chain=False):
-	if (diff_chain):
-		error_prob = alpha * (pow(d1, 3) + pow(d2, 3))
-	else:
-		error_prob = alpha * pow(np.abs(d1-d2), 3)
+# creates 2d list for ancillas
+def initAncillas(num_ancillas, num_qubits, num_logical, qubits):
+	ancillas = [[None]*num_ancillas]*num_logical 
+	for i in range(num_logical):
+		for j in range(num_ancillas):
+			ancillas[i][j] = qubits.qubit(i, num_qubits+j)
+	return ancillas
 
-	if (np.random.uniform(0, 1) < error_prob):
-		#print('chain error occurred')
-		yield cirq.Z(q1)
-		yield cirq.X(q2)
+# returns list of identity gates
+def initQubits(size, qubits):
+	gates = []
+	for i in range(len(qubits)):
+		gates.append(cirq.I(qubits[i]))
+	return gates
+
+# yields all gates stored in L, also initializes related logical qubits
+def initLogicalQubits(L):
+	if (L.error_model):
+		for i in range(L.size):
+			if (np.random.uniform(0,1) < L.p):
+				rand = np.random.uniform(0,1)
+				if (rand < 1/3):
+					L.gates.append(cirq.X.on(L.qubits[i]))
+				if ((rand >= 1/3) and (rand < 2/3)):
+					L.gates.append(cirq.Z.on(L.qubits[i]))
+				if (rand >= 2/3):
+					if (np.random.uniform(0,1) < 0.5):
+						L.gates.append(cirq.X.on(L.qubits[i]))
+					else:
+						L.gates.append(cirq.H.on(L.qubits[i]))
+
+	for j in range(len(L.gates)):
+		yield L.gates[j]
 
 
 # initialize Logical qubits to 0 state. init is number of logical qubits we want.
 class LogicalQubits:
-	def __init__(self, init, alpha=None, pdark=None, error_model=False):
+	def __init__(self, init, p, error_model=False, alpha=0, pdark=0):
 		assert (init >= 1)
-		self.size = 9
+		self.p = p
+		self.size = 17*init
 		self.qubits = cirq.GridQubit.rect(init, self.size+8)
 		self.ancillas = initAncillas(8, self.size, init, self)
 		self.gates = initQubits(self.size, self.qubits)
@@ -50,7 +74,7 @@ class LogicalQubits:
 						self.gates.append(gate.on(self.qubit(L1, i), self.qubit(L2, i)))
 
 					# chain specific error
-					self.gates.append(chain_error(self.qubit(L1, i), self.qubit(L2, i), i, i, self.alpha, True))
+					self.chain_error(L1, L2, i, i, True)
 			else:
 				for i in range(9):
 					self.gates.append(gate.on(self.qubit(L1, i), self.qubit(L2, i)))
@@ -60,25 +84,31 @@ class LogicalQubits:
 	def injectError(self, gate, L, index):
 		L.gates.append(gate.on(self.qubit(L, index)))
 
-# creates 2d list for ancillas
-def initAncillas(num_ancillas, num_qubits, num_logical, qubits):
-	ancillas = [[None]*num_ancillas]*num_logical 
-	for i in range(num_logical):
-		for j in range(num_ancillas):
-			ancillas[i][j] = qubits.qubit(i, num_qubits+j)
-	return ancillas
+	# for all other chain errors
+	def chain_error(self, L1, L2, i1, i2, diff_chain=False):
+		q1 = self.qubit(L1, i1)
+		q2 = self.qubit(L2, i2)
+		#if (diff_chain):
+		#	error_prob = self.alpha * (pow(i1, 3) + pow(i2, 3))
+		#else:
+		error_prob = self.alpha * pow(np.abs((9*L1+i1)-(9*L2+i2)), 3)
 
-# returns list of identity gates
-def initQubits(size, qubits):
-	gates = []
-	for i in range(len(qubits)):
-		gates.append(cirq.I(qubits[i]))
-	return gates
+		if (np.random.uniform(0, 1) < error_prob):
+			#print('chain error occurred')
+			self.gates.append(cirq.Z(q1))
+			self.gates.append(cirq.X(q2))
 
-# yields all gates stored in L, also initializes related logical qubits
-def initLogicalQubits(L):
-	for i in range(len(L.gates)):
-		yield L.gates[i]
+# for surface code chain errors
+def chain_error(q1, q2, d1, d2, alpha, diff_chain=False):
+	if (diff_chain):
+		error_prob = alpha * (pow(d1, 3) + pow(d2, 3))
+	else:
+		error_prob = alpha * pow(np.abs(d1-d2), 3)
+
+	if (np.random.uniform(0, 1) < error_prob):
+		#print('chain error occurred')
+		yield cirq.Z(q1)
+		yield cirq.X(q2)
 
 # given logical qubits and an index pointing to one, returns a Clifford circuit
 # implement mapping algorithm here (?)
@@ -316,25 +346,24 @@ def measureLogicalQubit(L, index):
 
 
 def main():
-	print(str(np.random.uniform(0,1)))
 	# gateOnLogical to apply gates
 	# measureLogicalQubit to run circuit and give final state
 
 	# debugging surface code; test 2 and 3 qubit errors (x,y,z)
 	# debugging gate on logical; apply multiple gates and make sure final state vector is correct
 
-	L = LogicalQubits(2)
-	L.gateOnLogical(cirq.CNOT, 0, 1)
-	print('CNOT gate only: 1st qubit state = ' + str(measureLogicalQubit(L, 0)))
-	print('2nd qubit state = ' + str(measureLogicalQubit(L, 1)))
+	#L = LogicalQubits(2)
+	#L.gateOnLogical(cirq.CNOT, 0, 1)
+	#print('CNOT gate only: 1st qubit state = ' + str(measureLogicalQubit(L, 0)))
+	#print('2nd qubit state = ' + str(measureLogicalQubit(L, 1)))
 
-	L = LogicalQubits(2)
-	L.gateOnLogical(cirq.X, 0)
-	L.gateOnLogical(cirq.CNOT, 0, 1)
-	print('Flip first then CNOT gate: 1st qubit state = ' + str(measureLogicalQubit(L, 0)))
-	print('2nd qubit state = ' + str(measureLogicalQubit(L, 1)))
+	#L = LogicalQubits(2)
+	#L.gateOnLogical(cirq.X, 0)
+	#L.gateOnLogical(cirq.CNOT, 0, 1)
+	#print('Flip first then CNOT gate: 1st qubit state = ' + str(measureLogicalQubit(L, 0)))
+	#print('2nd qubit state = ' + str(measureLogicalQubit(L, 1)))
 
-	L = LogicalQubits(2, 0.0001, 0, True)
+	L = LogicalQubits(2, 0.001, True)
 	L.gateOnLogical(cirq.X, 0)
 	L.gateOnLogical(cirq.CNOT, 0, 1)
 	print('Flip first then CNOT gate: 1st qubit state (error prone) = ' + str(measureLogicalQubit(L, 0)))
@@ -359,7 +388,7 @@ def main():
 	print('desired outcome:')
 	q0 = cirq.NamedQubit('test0')
 	q1 = cirq.NamedQubit('test1')
-	circuit = cirq.Circuit(cirq.X(q0), cirq.CNOT(q0, q1), cirq.measure(q0), cirq.measure(q1))
+	circuit = cirq.Circuit(cirq.ops.DepolarizingChannel(1.).on(q0), cirq.ops.BitFlipChannel(0).on(q1), cirq.measure(q0), cirq.measure(q1))
 	simulator = cirq.CliffordSimulator()
 	result = simulator.run(circuit)
 	if (result.measurements['test0'][0][0]):
